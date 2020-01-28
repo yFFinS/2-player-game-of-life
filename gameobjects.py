@@ -1,10 +1,14 @@
 import pygame as pg
+import random as rnd
 
 
 class Node(pg.sprite.Sprite):
     color = {0: pg.Color("black"), 1: pg.Color("blue"), 2: pg.Color("red")}
+    FIRSTPLAYER = 1
+    SECONDPLAYER = 2
+    DEAD = 0
 
-    def __init__(self, x, y, size, group=None):
+    def __init__(self, x: int, y: int, size: tuple, group=None) -> None:
         super().__init__()
         if group is not None:
             self.add(group)
@@ -12,16 +16,36 @@ class Node(pg.sprite.Sprite):
         self.image = pg.Surface(size)
         self.rect = self.image.get_rect()
         self.rect.topleft = (x, y)
+        self.__change_to = None
+        self.condition = Node.DEAD
+        self.preloaded = False
 
-    def change(self, player=1):
-        self.is_alive = not self.is_alive
-        if self.is_alive:
-            self.image.fill(Node.color[player])
+    def change(self, change_to=None) -> None:
+        if change_to is not None:
+            next_condition = change_to
         else:
-            self.image.fill(Node.color[0])
+            next_condition = self.__change_to
+        self.is_alive = next_condition != Node.DEAD
+        self.image.fill(Node.color[next_condition])
+        self.condition = next_condition
+        self.__change_to = None
+        self.preloaded = False
 
-    def get_pos(self):
+    def get_pos(self) -> tuple:
         return self.rect.topleft
+
+    def preload_next_change(self, change_to: int) -> None:
+        self.image.fill(Node.color[self.condition])
+        rect = pg.rect.Rect(0, 0, self.rect.w // 2, self.rect.h // 2)
+        rect.center = (self.rect.w // 2, self.rect.h // 2)
+        pg.draw.rect(self.image, Node.color[change_to], rect)
+        self.__change_to = change_to
+        self.preloaded = True
+
+    def reload(self):
+        self.image.fill(Node.color[self.condition])
+        self.__change_to = None
+        self.preloaded = False
 
 
 class Grid:
@@ -41,11 +65,13 @@ class Grid:
         self.grid = [[Node(x + i * node_size[0], y + j * node_size[1], node_size, self.nodes)
                       for j in range(self.grid_size[1])] for i in range(self.grid_size[0])]
 
+        self.__to_change = None
+
     def __change_node(self, node):
-        node.change(self.current_player)
+        node.change(Node.DEAD if node.is_alive else Node.FIRSTPLAYER)
 
     def __collide(self, x, y):
-        return 0 <= x - self.x <= self.grid_size[0] * self.node_size[0]\
+        return 0 <= x - self.x <= self.grid_size[0] * self.node_size[0] \
                and 0 <= y - self.y <= self.grid_size[1] * self.node_size[1]
 
     def __create_grid_lines(self):
@@ -97,26 +123,38 @@ class Grid:
         except IndexError:
             return
 
-    def next_generation(self) -> None:
-        to_change = []
+    def preload_next_generation(self) -> None:
+        self.__to_change = []
         for node in self.nodes:
             nb = self.__get_neighbours(node)
             alive = len(list(filter(lambda x: x.is_alive, nb)))
             if node.is_alive and not 2 <= alive <= 3 or not node.is_alive and alive == 3:
-                to_change.append(node)
-        for node in to_change:
+                self.__to_change.append(node)
+                node.preload_next_change(Node.DEAD if node.is_alive else Node.FIRSTPLAYER)
+            elif node.preloaded:
+                node.reload()
+
+    def next_generation(self) -> None:
+        if self.__to_change is None:
+            self.preload_next_generation()
+        for node in self.__to_change:
             self.__change_node(node)
+        self.preload_next_generation()
+
+    def random_generation(self):
+        for node in self.nodes:
+            if rnd.random() < 0.4:
+                node.change(rnd.choice([Node.DEAD, Node.FIRSTPLAYER]))
+        self.preload_next_generation()
 
     def render(self, screen: pg.Surface) -> None:
         self.nodes.draw(screen)
         self.lines.draw(screen)
 
     def update(self, event: pg.event.EventType) -> None:
-        x, y = event.pos
         if event.type == pg.MOUSEBUTTONDOWN:
             if event.button == pg.BUTTON_LEFT:
                 collision = self.__get_node_at(*event.pos)
                 if collision:
                     self.__change_node(collision)
-
-
+                    self.preload_next_generation()
